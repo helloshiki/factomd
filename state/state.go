@@ -931,6 +931,11 @@ func (s *State) Init() {
 		}
 	}
 
+	// add by yjs, init anchor
+	if s.NodeMode == "SERVER" {
+		a, _ := anchor.InitAnchor(s)
+		s.Anchor = a
+	}
 }
 
 func (s *State) HookLogstash() error {

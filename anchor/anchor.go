@@ -97,7 +97,7 @@ func (a *Anchor) doTransaction(hash interfaces.IHash, blockHeight uint32, dirBlo
 
 	if dirBlockInfo != nil {
 		dirBlockInfo.BTCTxHash = toHash(shaHash)
-		dirBlockInfo.SetTimestamp(primitives.NewTimestampNow())
+		dirBlockInfo.Timestamp = time.Now().Unix()
 		a.db.SaveDirBlockInfo(dirBlockInfo)
 	}
 
@@ -325,7 +325,7 @@ func (a *Anchor) checkMissingDirBlockInfo() {
 				dblock.BuildKeyMerkleRoot()
 			}
 			dirBlockInfo := dbInfo.NewDirBlockInfoFromDirBlock(dblock)
-			dirBlockInfo.SetTimestamp(primitives.NewTimestampNow())
+			dirBlockInfo.Timestamp = time.Now().Unix()
 			anchorLog.Debug("add missing dirBlockInfo to map: ", spew.Sdump(dirBlockInfo))
 			a.db.SaveDirBlockInfo(dirBlockInfo)
 			a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo)
@@ -335,23 +335,77 @@ func (a *Anchor) checkMissingDirBlockInfo() {
 
 // InitAnchor inits rpc clients for factom
 // and load up unconfirmed DirBlockInfo from leveldb
+func InitAnchor(s interfaces.IState) (*Anchor, error) {
+	anchorLog.Debug("InitAnchor")
+	fmt.Println("========================== init anchor")
+	a := NewAnchor()
+	a.state = s
+
+	a.cfg = s.GetCfg().(*util.FactomdConfig)
+
+	a.db = s.GetAndLockDB().(interfaces.DBOverlay)
+	a.minBalance, _ = btcutil.NewAmount(0.01)
+	a.readConfig()
+
+	var err error
+	a.dirBlockInfoSlice, err = a.db.FetchAllUnconfirmedDirBlockInfos()
+	if err != nil {
+		anchorLog.Error("InitAnchor error - " + err.Error())
+		return nil, err
+	}
+	anchorLog.Debug("init dirBlockInfoSlice.len=", len(a.dirBlockInfoSlice))
+	// this might take a while to check missing DirBlockInfo for existing DirBlocks in database
+
+	//TODO: handle concurrance better
+	go a.checkMissingDirBlockInfo()
+
+
+	if err = a.InitRPCClient(); err != nil {
+		anchorLog.Error(err.Error())
+	} else {
+		a.updateUTXO(a.minBalance)
+	}
+
+	ticker0 := time.NewTicker(time.Minute * time.Duration(1))
+	go func() {
+		for _ = range ticker0.C {
+			a.checkForAnchor()
+		}
+	}()
+
+	ticker := time.NewTicker(time.Minute * time.Duration(a.tenMinutes))
+	go func() {
+		for _ = range ticker.C {
+			anchorLog.Info("In 10 minutes ticker...")
+			a.readConfig()
+			if a.dclient == nil || a.wclient == nil {
+				if err = a.InitRPCClient(); err != nil {
+					anchorLog.Error(err.Error())
+				}
+			}
+			if a.wclient != nil {
+				a.checkTxConfirmations()
+			}
+		}
+	}()
+	return a, nil
+}
 
 func (a *Anchor) readConfig() {
 	anchorLog.Info("readConfig")
-	a.cfg = util.ReadConfig("")
-	a.confirmationsNeeded = a.cfg.Anchor.ConfirmationsNeeded
-	a.fee, _ = btcutil.NewAmount(a.cfg.Btc.BtcTransFee)
+	a.confirmationsNeeded = anchorCfg.Anchor.ConfirmationsNeeded
+	a.fee, _ = btcutil.NewAmount(anchorCfg.Btc.BtcTransFee)
 
 	var err error
 	a.serverPrivKey, err = primitives.NewPrivateKeyFromHex(a.cfg.App.LocalServerPrivKey)
 	if err != nil {
 		panic("Cannot parse Server Private Key from configuration file: " + err.Error())
 	}
-	a.serverECKey, err = primitives.NewPrivateKeyFromHex(a.cfg.Anchor.ServerECPrivKey)
+	a.serverECKey, err = primitives.NewPrivateKeyFromHex(anchorCfg.Anchor.ServerECPrivKey)
 	if err != nil {
 		panic("Cannot parse Server EC Key from configuration file: " + err.Error())
 	}
-	a.anchorChainID, err = primitives.HexToHash(a.cfg.Anchor.AnchorChainID)
+	a.anchorChainID, err = primitives.HexToHash(anchorCfg.Anchor.AnchorChainID)
 	anchorLog.Debug("anchorChainID: ", a.anchorChainID)
 	if err != nil || a.anchorChainID == nil {
 		panic("Cannot parse Server AnchorChainID from configuration file: " + err.Error())
@@ -366,13 +420,13 @@ func (a *Anchor) InitRPCClient() error {
 	if a.cfg == nil {
 		a.readConfig()
 	}
-	certHomePath := a.cfg.Btc.CertHomePath
-	rpcClientHost := a.cfg.Btc.RpcClientHost
-	rpcClientEndpoint := a.cfg.Btc.RpcClientEndpoint
-	rpcClientUser := a.cfg.Btc.RpcClientUser
-	rpcClientPass := a.cfg.Btc.RpcClientPass
-	certHomePathBtcd := a.cfg.Btc.CertHomePathBtcd
-	rpcBtcdHost := a.cfg.Btc.RpcBtcdHost
+	certHomePath := anchorCfg.Btc.CertHomePath
+	rpcClientHost := anchorCfg.Btc.RpcClientHost
+	rpcClientEndpoint := anchorCfg.Btc.RpcClientEndpoint
+	rpcClientUser := anchorCfg.Btc.RpcClientUser
+	rpcClientPass := anchorCfg.Btc.RpcClientPass
+	certHomePathBtcd := anchorCfg.Btc.CertHomePathBtcd
+	rpcBtcdHost := anchorCfg.Btc.RpcBtcdHost
 
 	// Connect to local btcwallet RPC server using websockets.
 	ntfnHandlers := a.createBtcwalletNotificationHandlers()
@@ -420,7 +474,7 @@ func (a *Anchor) InitRPCClient() error {
 }
 
 func (a *Anchor) unlockWallet(timeoutSecs int64) error {
-	err := a.wclient.WalletPassphrase(a.cfg.Btc.WalletPassphrase, int64(timeoutSecs))
+	err := a.wclient.WalletPassphrase(anchorCfg.Btc.WalletPassphrase, int64(timeoutSecs))
 	if err != nil {
 		return fmt.Errorf("cannot unlock wallet with passphrase: %s", err)
 	}
@@ -534,7 +588,7 @@ func (a *Anchor) doSaveDirBlockInfo(transaction *btcutil.Tx, details *btcjson.Bl
 	dirBlockInfo.BTCBlockHeight = details.Height
 	btcBlockHash, _ := wire.NewShaHashFromStr(details.Hash)
 	dirBlockInfo.BTCBlockHash = toHash(btcBlockHash)
-	dirBlockInfo.SetTimestamp(primitives.NewTimestampNow())
+	dirBlockInfo.Timestamp = time.Now().Unix()
 	a.db.SaveDirBlockInfo(dirBlockInfo)
 	anchorLog.Infof("In doSaveDirBlockInfo, dirBlockInfo:%s saved to db\n", spew.Sdump(dirBlockInfo))
 
@@ -550,12 +604,11 @@ func (a *Anchor) saveToAnchorChain(dirBlockInfo *dbInfo.DirBlockInfo) {
 	anchorRec.AnchorRecordVer = 1
 	anchorRec.DBHeight = dirBlockInfo.GetDBHeight()
 	anchorRec.KeyMR = dirBlockInfo.GetDBMerkleRoot().String()
-	anchorRec.RecordHeight = a.state.GetHighestCompletedBlock() // need the next block height
-	anchorRec.Bitcoin = new(BitcoinStruct)
+	anchorRec.RecordHeight = a.state.GetHighestSavedBlk() // need the next block height
 	anchorRec.Bitcoin.Address = a.defaultAddress.String()
-	anchorRec.Bitcoin.TXID = dirBlockInfo.GetBTCTxHash().(*primitives.Hash).BTCString()
+	anchorRec.Bitcoin.TXID = dirBlockInfo.GetBTCTxHash().(*primitives.Hash).String()
 	anchorRec.Bitcoin.BlockHeight = dirBlockInfo.BTCBlockHeight
-	anchorRec.Bitcoin.BlockHash = dirBlockInfo.BTCBlockHash.(*primitives.Hash).BTCString()
+	anchorRec.Bitcoin.BlockHash = dirBlockInfo.BTCBlockHash.(*primitives.Hash).String()
 	anchorRec.Bitcoin.Offset = dirBlockInfo.BTCTxOffset
 	anchorLog.Info("before submitting Entry To AnchorChain. anchor.record: " + spew.Sdump(anchorRec))
 
@@ -580,7 +633,7 @@ func toShaHash(hash interfaces.IHash) *wire.ShaHash {
 // when a new Directory Block is saved to db
 func (a *Anchor) UpdateDirBlockInfoMap(dirBlockInfo interfaces.IDirBlockInfo) {
 	anchorLog.Debug("UpdateDirBlockInfoMap: ", spew.Sdump(dirBlockInfo))
-	a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo.(*dbInfo.DirBlockInfo))
+	//a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo.(*dbInfo.DirBlockInfo))
 }
 
 func (a *Anchor) checkForAnchor() {
@@ -643,7 +696,7 @@ func (a *Anchor) checkConfirmations(dirBlockInfo *dbInfo.DirBlockInfo, index int
 			rewrite = true
 		}
 		dirBlockInfo.BTCConfirmed = true // needs confirmationsNeeded (20) to be confirmed.
-		dirBlockInfo.SetTimestamp(primitives.NewTimestampNow())
+		dirBlockInfo.Timestamp = time.Now().Unix()
 		a.db.SaveDirBlockInfo(dirBlockInfo)
 		a.dirBlockInfoSlice = append(a.dirBlockInfoSlice[:index], a.dirBlockInfoSlice[index+1:]...) //delete it
 		anchorLog.Debugf("Fully confirmed %d times. txid=%s, dirblockInfo=%s\n", txResult.Confirmations, txResult.TxID, spew.Sdump(dirBlockInfo))
@@ -675,7 +728,7 @@ func (a *Anchor) checkTxMalleation(transaction *btcutil.Tx, details *btcjson.Blo
 		anchorLog.Debugf("GetRawTransaction=%s, dirBlockInfo=%s\n", spew.Sdump(tx), spew.Sdump(dirBlockInfo))
 		// compare OP_RETURN
 		if reflect.DeepEqual(transaction.MsgTx().TxOut[0], tx.MsgTx().TxOut[0]) {
-			anchorLog.Debugf("Tx Malleated: original.txid=%s, malleated.txid=%s\n", dirBlockInfo.GetBTCTxHash().(*primitives.Hash).BTCString(), transaction.Sha().String())
+			anchorLog.Debugf("Tx Malleated: original.txid=%s, malleated.txid=%s\n", dirBlockInfo.GetBTCTxHash().(*primitives.Hash).String(), transaction.Sha().String())
 			a.doSaveDirBlockInfo(transaction, details, dirBlockInfo.(*dbInfo.DirBlockInfo), true)
 			break
 		}

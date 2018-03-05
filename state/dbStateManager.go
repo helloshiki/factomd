@@ -1426,6 +1426,15 @@ func (list *DBStateList) UpdateState() (progress bool) {
 
 		if d.Saved {
 			saved = i
+			// add by yjs
+			if false && list.State.IsLeader() {
+				anchor := list.State.GetAnchor()
+				if  anchor != nil {
+					anchor.UpdateDirBlockInfoMap(dbInfo.NewDirBlockInfoFromDirBlock(d.DirectoryBlock))
+				} else {
+					fmt.Println("===== anchor not init")
+				}
+			}
 		}
 		if i-saved > 1 {
 			break

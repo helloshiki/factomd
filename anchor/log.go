@@ -5,23 +5,11 @@
 package anchor
 
 import (
-	"os"
-	"strings"
-
-	"github.com/FactomProject/factomd/logger"
-	"github.com/FactomProject/factomd/util"
+	log "github.com/sirupsen/logrus"
 )
 
-var (
-	cfg        = util.ReadConfig("")
-	homedir    = cfg.App.HomeDir
-	network    = strings.ToLower(cfg.App.Network) + "-"
-	logPath    = cfg.Log.LogPath
-	logLevel   = cfg.Log.LogLevel
-	logfile, _ = os.OpenFile(homedir+network+logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0660)
-)
 
 // setup subsystem loggers
 var (
-	anchorLog = logger.New(logfile, logLevel, "ANCH")
+	anchorLog = log.WithFields(log.Fields{"package": "anchor"})
 )
