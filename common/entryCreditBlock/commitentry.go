@@ -163,9 +163,10 @@ func (c *CommitEntry) IsValid() bool {
 	}
 
 	//if there were no errors in processing the signature, formatting or if didn't validate
-	if nil == c.ValidateSignatures() {
+	if err:= c.ValidateSignatures(); err == nil {
 		return true
 	} else {
+		fmt.Println("===== ValidateSignatures", err)
 		return false
 	}
 }

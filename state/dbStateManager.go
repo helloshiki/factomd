@@ -23,6 +23,7 @@ import (
 	"github.com/FactomProject/factomd/common/primitives"
 	"github.com/FactomProject/factomd/database/databaseOverlay"
 	"github.com/FactomProject/factomd/log"
+	"github.com/FactomProject/factomd/common/directoryBlock/dbInfo"
 )
 
 var _ = hex.EncodeToString
@@ -1197,6 +1198,7 @@ func (list *DBStateList) SaveDBStateToDB(d *DBState) (progress bool) {
 	// If this is a repeated block, and I have already saved at this height, then we can safely ignore
 	// this dbstate.
 	if d.Repeat == true && uint32(dbheight) <= list.SavedHeight {
+		fmt.Println("=== aleady save", d.Repeat, uint32(dbheight), list.SavedHeight)
 		progress = true
 		d.ReadyToSave = false
 		d.Saved = true
@@ -1323,6 +1325,7 @@ func (list *DBStateList) SaveDBStateToDB(d *DBState) (progress bool) {
 
 				for _, e := range eb.GetBody().GetEBEntries() {
 					if _, ok := allowedEntries[e.Fixed()]; ok {
+						fmt.Println("xxx insert entry multi bacth", pl.GetNewEntry(e.Fixed()))
 						if err := list.State.DB.InsertEntryMultiBatch(pl.GetNewEntry(e.Fixed())); err != nil {
 							panic(err.Error())
 						}
@@ -1397,7 +1400,17 @@ func (list *DBStateList) SaveDBStateToDB(d *DBState) (progress bool) {
 	progress = true
 	d.ReadyToSave = false
 	d.Saved = true
+	fmt.Println("=============== xxx save", list.SavedHeight, list.State.IsLeader(), dbheight)
 
+	// add by yjs
+	if list.State.IsLeader() {
+		anchor := list.State.GetAnchor()
+		if  anchor != nil {
+			anchor.UpdateDirBlockInfoMap(dbInfo.NewDirBlockInfoFromDirBlock(d.DirectoryBlock))
+		} else {
+			fmt.Println("===== anchor not init")
+		}
+	}
 	return
 }
 
@@ -1426,15 +1439,6 @@ func (list *DBStateList) UpdateState() (progress bool) {
 
 		if d.Saved {
 			saved = i
-			// add by yjs
-			if false && list.State.IsLeader() {
-				anchor := list.State.GetAnchor()
-				if  anchor != nil {
-					anchor.UpdateDirBlockInfoMap(dbInfo.NewDirBlockInfoFromDirBlock(d.DirectoryBlock))
-				} else {
-					fmt.Println("===== anchor not init")
-				}
-			}
 		}
 		if i-saved > 1 {
 			break

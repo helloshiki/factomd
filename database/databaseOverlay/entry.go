@@ -4,6 +4,7 @@ import (
 	"github.com/FactomProject/factomd/common/entryBlock"
 	"github.com/FactomProject/factomd/common/interfaces"
 	"github.com/FactomProject/factomd/common/primitives"
+	"fmt"
 )
 
 // InsertEntry inserts an entry
@@ -31,6 +32,7 @@ func (db *Overlay) InsertEntry(entry interfaces.IEBEntry) error {
 }
 
 func (db *Overlay) InsertEntryMultiBatch(entry interfaces.IEBEntry) error {
+	fmt.Println("=======InsertEntryMultiBatch")
 	if entry == nil {
 		return nil
 	}
@@ -45,7 +47,14 @@ func (db *Overlay) InsertEntryMultiBatch(entry interfaces.IEBEntry) error {
 
 	db.PutInMultiBatch(batch)
 	if entry.GetChainID().String() == AnchorBlockID {
-		db.SaveAnchorInfoFromEntryMultiBatch(entry)
+		fmt.Println("=======InsertEntryMultiBatch", entry)
+
+		err:=db.SaveAnchorInfoFromEntryMultiBatch(entry)
+		if err != nil {
+			fmt.Println("SaveAnchorInfoFromEntryMultiBatch fail ", err)
+		} else {
+			fmt.Println("SaveAnchorInfoFromEntryMultiBatch ok ")
+		}
 	}
 	return nil
 }

@@ -11,12 +11,14 @@ import (
 	"github.com/FactomProject/factomd/common/interfaces"
 	"github.com/FactomProject/factomd/common/primitives"
 	"sort"
+	"fmt"
 )
 
 var AnchorBlockID string = "df3ade9eec4b08d5379cc64270c30ea7315d8a8a1a69efe2b98a60ecdd69e604"
 var AnchorSigKeys []string = []string{
 	"0426a802617848d4d16d87830fc521f4d136bb2d0c352850919c2679f189613a", //m1 key
 	"d569419348ed7056ec2ba54f0ecd9eea02648b260b26e0474f8c07fe9ac6bf83", //m2 key
+	"8bee2930cbe4772ae5454c4801d4ef366276f6e4cc65bac18be03607c00288c4",
 }
 var AnchorSigPublicKeys []interfaces.Verifier
 
@@ -58,6 +60,8 @@ func (dbo *Overlay) SaveAnchorInfoFromEntry(entry interfaces.IEBEntry) error {
 	if ar == nil {
 		return nil
 	}
+
+	fmt.Println("validate ok------------")
 	dbi, err := AnchorRecordToDirBlockInfo(ar)
 	if err != nil {
 		return err
@@ -67,20 +71,27 @@ func (dbo *Overlay) SaveAnchorInfoFromEntry(entry interfaces.IEBEntry) error {
 
 func (dbo *Overlay) SaveAnchorInfoFromEntryMultiBatch(entry interfaces.IEBEntry) error {
 	if entry.DatabasePrimaryIndex().String() == "24674e6bc3094eb773297de955ee095a05830e431da13a37382dcdc89d73c7d7" {
+		fmt.Println("SaveAnchorInfoFromEntryMultiBatch invalid index")
 		return nil
 	}
 	ar, ok, err := anchor.UnmarshalAndValidateAnchorEntryAnyVersion(entry, AnchorSigPublicKeys)
 	if err != nil {
+		fmt.Println("UnmarshalAndValidateAnchorEntryAnyVersion ", err)
 		return err
 	}
 	if ok == false {
+		fmt.Println("UnmarshalAndValidateAnchorEntryAnyVersion ok=false", err)
 		return nil
 	}
 	if ar == nil {
+		fmt.Println("UnmarshalAndValidateAnchorEntryAnyVersion ar=nil", err)
 		return nil
 	}
+	fmt.Println("validate ok------------")
+
 	dbi, err := AnchorRecordToDirBlockInfo(ar)
 	if err != nil {
+		fmt.Println("UnmarshalAndValidateAnchorEntryAnyVersion AnchorRecordToDirBlockInfo", err)
 		return err
 	}
 	return dbo.ProcessDirBlockInfoMultiBatch(dbi)

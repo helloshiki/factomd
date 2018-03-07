@@ -176,6 +176,7 @@ func UnmarshalAndValidateAnchorRecordV2(data []byte, extIDs [][]byte, publicKeys
 		}
 	}
 	if valid == false {
+		fmt.Println("validate pub key fail")
 		return nil, false, nil
 	}
 

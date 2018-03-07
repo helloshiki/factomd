@@ -6,7 +6,12 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Get glide
-RUN go get github.com/Masterminds/glide
+RUN go get github.com/Masterminds/glide; \
+    go get github.com/btcsuitereleases/btclog; \
+    go get github.com/btcsuitereleases/fastsha256; \
+    go get github.com/btcsuitereleases/go-socks/socks; \
+    go get github.com/btcsuitereleases/golangcrypto/ripemd160; \
+    go get github.com/btcsuitereleases/websocket
 
 # Where factomd sources will live
 WORKDIR $GOPATH/src/github.com/FactomProject/factomd

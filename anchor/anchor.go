@@ -75,8 +75,10 @@ func (a *Anchor) SendRawTransactionToBTC(hash interfaces.IHash, blockHeight uint
 	anchorLog.Debug("SendRawTransactionToBTC: hash=", hash.String(), ", dir block height=", blockHeight) //strconv.FormatUint(blockHeight, 10))
 	dirBlockInfo, err := a.sanityCheck(hash)
 	if err != nil {
+		fmt.Println("sanity check fail ", hash, err)
 		return nil, err
 	}
+	fmt.Println("SendRawTransactionToBTC: hash=", hash.String(), ", dir block height=", blockHeight)
 	return a.doTransaction(hash, blockHeight, dirBlockInfo)
 }
 
@@ -98,6 +100,7 @@ func (a *Anchor) doTransaction(hash interfaces.IHash, blockHeight uint32, dirBlo
 	if dirBlockInfo != nil {
 		dirBlockInfo.BTCTxHash = toHash(shaHash)
 		dirBlockInfo.Timestamp = time.Now().Unix()
+		fmt.Println(1111, "save dirblock info", dirBlockInfo)
 		a.db.SaveDirBlockInfo(dirBlockInfo)
 	}
 
@@ -105,9 +108,19 @@ func (a *Anchor) doTransaction(hash interfaces.IHash, blockHeight uint32, dirBlo
 }
 
 func (a *Anchor) sanityCheck(hash interfaces.IHash) (*dbInfo.DirBlockInfo, error) {
-	index := sort.Search(len(a.dirBlockInfoSlice), func(i int) bool {
-		return a.dirBlockInfoSlice[i].GetDBMerkleRoot().IsSameAs(hash)
-	})
+	//index := sort.Search(len(a.dirBlockInfoSlice), func(i int) bool {
+	//	return a.dirBlockInfoSlice[i].GetDBMerkleRoot().IsSameAs(hash)
+	//})
+	index:=-1
+	for i, _ := range a.dirBlockInfoSlice {
+		if a.dirBlockInfoSlice[i].GetDBMerkleRoot().IsSameAs(hash) {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return nil, errors.New("xxxxxxx error")
+	}
 	var dirBlockInfo *dbInfo.DirBlockInfo
 	ok := false
 	if index < len(a.dirBlockInfoSlice) {
@@ -286,6 +299,7 @@ func (a *Anchor) createBtcwalletNotificationHandlers() btcrpcclient.Notification
 	ntfnHandlers := btcrpcclient.NotificationHandlers{
 		OnWalletLockState: func(locked bool) {
 			anchorLog.Info("wclient: OnWalletLockState, locked=", locked)
+			fmt.Println("wclient: OnWalletLockState, locked=", locked)
 			a.walletLocked = locked
 		},
 	}
@@ -295,13 +309,26 @@ func (a *Anchor) createBtcwalletNotificationHandlers() btcrpcclient.Notification
 func (a *Anchor) createBtcdNotificationHandlers() btcrpcclient.NotificationHandlers {
 	ntfnHandlers := btcrpcclient.NotificationHandlers{
 		OnRedeemingTx: func(transaction *btcutil.Tx, details *btcjson.BlockDetails) {
+			fmt.Println("ffff OnRedeemingTx", details, transaction)
 			if details != nil {
 				// do not block OnRedeemingTx callback
 				//anchorLog.Info(" saveDirBlockInfo.")
-
+				fmt.Printf("============ OnRedeeming %+v %+v\n", transaction, details)
 				//TODO: handle concurrance better
 				go a.saveDirBlockInfo(transaction, details)
+			} else {
+				details = &btcjson.BlockDetails{
+					Height: 100000,
+					Hash:   "123",
+					Index:  0,
+					Time:   12345678,
+				}
+				go a.saveDirBlockInfo(transaction, details)
 			}
+		},
+		OnRecvTx: func(transaction *btcutil.Tx, details *btcjson.BlockDetails) {
+			fmt.Println("ffff OnRecvTx", details, transaction)
+
 		},
 	}
 	return ntfnHandlers
@@ -311,6 +338,7 @@ func (a *Anchor) checkMissingDirBlockInfo() {
 	anchorLog.Debug("checkMissingDirBlockInfo for those unsaved DirBlocks in database")
 	dblocks, _ := a.db.FetchAllDBlocks()
 	dirBlockInfos, _ := a.db.FetchAllDirBlockInfos() //FetchAllDirBlockInfos()
+	fmt.Println("check missing dir block info", len(dblocks))
 	for _, dblock := range dblocks {
 		var found = false
 		for i, dbinfo := range dirBlockInfos {
@@ -327,10 +355,12 @@ func (a *Anchor) checkMissingDirBlockInfo() {
 			dirBlockInfo := dbInfo.NewDirBlockInfoFromDirBlock(dblock)
 			dirBlockInfo.Timestamp = time.Now().Unix()
 			anchorLog.Debug("add missing dirBlockInfo to map: ", spew.Sdump(dirBlockInfo))
+			fmt.Println("add missing dirBlockInfo to map: ", spew.Sdump(dirBlockInfo))
 			a.db.SaveDirBlockInfo(dirBlockInfo)
 			a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo)
 		}
 	}
+	fmt.Println("dirBlockInfoSlice len", len(a.dirBlockInfoSlice))
 }
 
 // InitAnchor inits rpc clients for factom
@@ -342,7 +372,7 @@ func InitAnchor(s interfaces.IState) (*Anchor, error) {
 	a.state = s
 
 	a.cfg = s.GetCfg().(*util.FactomdConfig)
-
+	fmt.Println("===config", a.cfg.String())
 	a.db = s.GetAndLockDB().(interfaces.DBOverlay)
 	a.minBalance, _ = btcutil.NewAmount(0.01)
 	a.readConfig()
@@ -354,11 +384,13 @@ func InitAnchor(s interfaces.IState) (*Anchor, error) {
 		return nil, err
 	}
 	anchorLog.Debug("init dirBlockInfoSlice.len=", len(a.dirBlockInfoSlice))
+	fmt.Println("init dirBlockInfoSlice.len=", len(a.dirBlockInfoSlice))
+	for i, xb := range a.dirBlockInfoSlice {
+		fmt.Println("unconfirm", i, xb)
+	}
 	// this might take a while to check missing DirBlockInfo for existing DirBlocks in database
-
 	//TODO: handle concurrance better
 	go a.checkMissingDirBlockInfo()
-
 
 	if err = a.InitRPCClient(); err != nil {
 		anchorLog.Error(err.Error())
@@ -366,10 +398,13 @@ func InitAnchor(s interfaces.IState) (*Anchor, error) {
 		a.updateUTXO(a.minBalance)
 	}
 
-	ticker0 := time.NewTicker(time.Minute * time.Duration(1))
+	//ticker0 := time.NewTicker(time.Minute * time.Duration(1))
+	ticker0 := time.NewTicker(time.Second * time.Duration(120))
 	go func() {
+		time.Sleep(time.Second * time.Duration(5))
+		//a.checkForAnchor()
 		for _ = range ticker0.C {
-			a.checkForAnchor()
+			//a.checkForAnchor()
 		}
 	}()
 
@@ -397,7 +432,7 @@ func (a *Anchor) readConfig() {
 	a.fee, _ = btcutil.NewAmount(anchorCfg.Btc.BtcTransFee)
 
 	var err error
-	a.serverPrivKey, err = primitives.NewPrivateKeyFromHex(a.cfg.App.LocalServerPrivKey)
+	a.serverPrivKey, err = primitives.NewPrivateKeyFromHex(anchorCfg.Anchor.ServerPrivKey)
 	if err != nil {
 		panic("Cannot parse Server Private Key from configuration file: " + err.Error())
 	}
@@ -405,6 +440,9 @@ func (a *Anchor) readConfig() {
 	if err != nil {
 		panic("Cannot parse Server EC Key from configuration file: " + err.Error())
 	}
+
+	fmt.Println("key--------", a.serverPrivKey.PrivateKeyString(), a.serverPrivKey.PublicKeyString())
+
 	a.anchorChainID, err = primitives.HexToHash(anchorCfg.Anchor.AnchorChainID)
 	anchorLog.Debug("anchorChainID: ", a.anchorChainID)
 	if err != nil || a.anchorChainID == nil {
@@ -417,6 +455,7 @@ func (a *Anchor) readConfig() {
 // running in different machine.
 func (a *Anchor) InitRPCClient() error {
 	anchorLog.Debug("init RPC client")
+	fmt.Println("================ init rpc client")
 	if a.cfg == nil {
 		a.readConfig()
 	}
@@ -560,9 +599,12 @@ func prependBlockHeight(height uint32, hash []byte) ([]byte, error) {
 
 func (a *Anchor) saveDirBlockInfo(transaction *btcutil.Tx, details *btcjson.BlockDetails) {
 	anchorLog.Debug("in saveDirBlockInfo")
+	fmt.Println("in saveDirBlockInfo", transaction, details)
 	var saved = false
 	for _, dirBlockInfo := range a.dirBlockInfoSlice {
+		fmt.Println(23, dirBlockInfo.GetBTCTxHash().Bytes(), transaction.Sha().Bytes())
 		if bytes.Compare(dirBlockInfo.GetBTCTxHash().Bytes(), transaction.Sha().Bytes()) == 0 {
+			fmt.Printf("1111, save %+v", transaction)
 			a.doSaveDirBlockInfo(transaction, details, dirBlockInfo.(*dbInfo.DirBlockInfo), false)
 			saved = true
 			break
@@ -575,7 +617,10 @@ func (a *Anchor) saveDirBlockInfo(transaction *btcutil.Tx, details *btcjson.Bloc
 	// In this case, if tx malleation is detected, then use the malleated tx to replace the original tx;
 	// Otherwise, it will end up being re-anchored.
 	if !saved {
-		anchorLog.Infof("Not saved to db, (maybe btc tx malleated): btc.tx=%s\n blockDetails=%s\n", spew.Sdump(transaction), spew.Sdump(details))
+		//anchorLog.Infof("Not saved to db, (maybe btc tx malleated): btc.tx=%s\n blockDetails=%s\n", spew.Sdump(transaction), spew.Sdump(details))
+		fmt.Println("Not saved to db, (maybe btc tx malleated): btc.tx=%s\n blockDetails=%s\n", transaction, details)
+		//fmt.Println(spew.Sdump(transaction))
+		//fmt.Println(spew.Sdump(details))
 		a.checkTxMalleation(transaction, details)
 	}
 }
@@ -589,28 +634,36 @@ func (a *Anchor) doSaveDirBlockInfo(transaction *btcutil.Tx, details *btcjson.Bl
 	btcBlockHash, _ := wire.NewShaHashFromStr(details.Hash)
 	dirBlockInfo.BTCBlockHash = toHash(btcBlockHash)
 	dirBlockInfo.Timestamp = time.Now().Unix()
+
+
+
 	a.db.SaveDirBlockInfo(dirBlockInfo)
 	anchorLog.Infof("In doSaveDirBlockInfo, dirBlockInfo:%s saved to db\n", spew.Sdump(dirBlockInfo))
+	fmt.Printf("In doSaveDirBlockInfo, dirBlockInfo:%s saved to db\n", spew.Sdump(dirBlockInfo))
 
 	// to make factom / explorer more user friendly, instead of waiting for
 	// over 2 hours to know it's anchored, we can create the anchor chain instantly
 	// then change it when the btc main chain re-org happens.
-	a.saveToAnchorChain(dirBlockInfo)
+	//dirBlockInfo.BTCConfirmed = true	// TODO delete
+	a.saveToAnchorChain(dirBlockInfo) // TODO
 }
 
 func (a *Anchor) saveToAnchorChain(dirBlockInfo *dbInfo.DirBlockInfo) {
 	anchorLog.Debug("in saveToAnchorChain")
 	anchorRec := new(AnchorRecord)
+	anchorRec.Bitcoin = new(BitcoinStruct)
 	anchorRec.AnchorRecordVer = 1
 	anchorRec.DBHeight = dirBlockInfo.GetDBHeight()
 	anchorRec.KeyMR = dirBlockInfo.GetDBMerkleRoot().String()
 	anchorRec.RecordHeight = a.state.GetHighestSavedBlk() // need the next block height
+	fmt.Println(333, a.defaultAddress)
 	anchorRec.Bitcoin.Address = a.defaultAddress.String()
 	anchorRec.Bitcoin.TXID = dirBlockInfo.GetBTCTxHash().(*primitives.Hash).String()
 	anchorRec.Bitcoin.BlockHeight = dirBlockInfo.BTCBlockHeight
 	anchorRec.Bitcoin.BlockHash = dirBlockInfo.BTCBlockHash.(*primitives.Hash).String()
 	anchorRec.Bitcoin.Offset = dirBlockInfo.BTCTxOffset
 	anchorLog.Info("before submitting Entry To AnchorChain. anchor.record: " + spew.Sdump(anchorRec))
+	fmt.Println("before submitting Entry To AnchorChain. anchor.record: " + spew.Sdump(anchorRec))
 
 	err := a.submitEntryToAnchorChain(anchorRec)
 	if err != nil {
@@ -633,18 +686,29 @@ func toShaHash(hash interfaces.IHash) *wire.ShaHash {
 // when a new Directory Block is saved to db
 func (a *Anchor) UpdateDirBlockInfoMap(dirBlockInfo interfaces.IDirBlockInfo) {
 	anchorLog.Debug("UpdateDirBlockInfoMap: ", spew.Sdump(dirBlockInfo))
-	//a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo.(*dbInfo.DirBlockInfo))
+	fmt.Println("=== UpdateDirBlockInfoMap: ", spew.Sdump(dirBlockInfo))
+	a.dirBlockInfoSlice = append(a.dirBlockInfoSlice, dirBlockInfo.(*dbInfo.DirBlockInfo))
+	fmt.Println("  UpdateDirBlockInfoMap: total ", len(a.dirBlockInfoSlice))
 }
 
 func (a *Anchor) checkForAnchor() {
 	timeNow := time.Now().Unix()
 	time0 := 60 * 60 * a.reAnchorAfter
 	// anchor the latest dir block first
+	fmt.Println(111, "checkForAnchor")
 	sort.Sort(sort.Reverse(util.ByDirBlockInfoTimestamp(a.dirBlockInfoSlice)))
 	for _, dirBlockInfo := range a.dirBlockInfoSlice {
-		if bytes.Compare(dirBlockInfo.GetBTCTxHash().Bytes(), primitives.NewZeroHash().Bytes()) == 0 {
-			anchorLog.Debug("first time anchor: ", spew.Sdump(dirBlockInfo))
-			a.SendRawTransactionToBTC(dirBlockInfo.GetDBMerkleRoot(), dirBlockInfo.GetDBHeight())
+		//fmt.Println(dirBlockInfo.GetBTCTxHash().Bytes(), primitives.NewZeroHash().Bytes())
+		//if bytes.Compare(dirBlockInfo.GetBTCTxHash().Bytes(), primitives.NewZeroHash().Bytes()) == 0 {
+		if true {
+			fmt.Println("first time anchor: ", spew.Sdump(dirBlockInfo))
+			_, err := a.SendRawTransactionToBTC(dirBlockInfo.GetDBMerkleRoot(), dirBlockInfo.GetDBHeight())
+			if err == nil {
+				fmt.Println("send one ok")
+				//break // TODO delete
+			} else {
+				fmt.Println("SendRawTransactionToBTC fail", err)
+			}
 		} else {
 			// This is the re-anchor case for the missed callback of malleated tx
 			lapse := timeNow - dirBlockInfo.GetTimestamp().GetTimeSeconds()
@@ -658,7 +722,8 @@ func (a *Anchor) checkForAnchor() {
 
 func (a *Anchor) checkTxConfirmations() {
 	timeNow := time.Now().Unix()
-	time1 := 60 * 5 * a.confirmationsNeeded
+	//time1 := 60 * 5 * a.confirmationsNeeded
+	time1 := 60
 	sort.Sort(util.ByDirBlockInfoTimestamp(a.dirBlockInfoSlice))
 	for i, dirBlockInfo := range a.dirBlockInfoSlice {
 		lapse := timeNow - dirBlockInfo.GetTimestamp().GetTimeSeconds()
@@ -677,6 +742,7 @@ func (a *Anchor) checkConfirmations(dirBlockInfo *dbInfo.DirBlockInfo, index int
 		return err
 	}
 	anchorLog.Debugf("GetTransactionResult: %s\n", spew.Sdump(txResult))
+	//fmt.Printf("GetTransactionResult: %s\n", spew.Sdump(txResult))
 	if txResult.Confirmations >= int64(a.confirmationsNeeded) {
 		btcBlockHash, _ := wire.NewShaHashFromStr(txResult.BlockHash)
 		var rewrite = false
@@ -700,8 +766,11 @@ func (a *Anchor) checkConfirmations(dirBlockInfo *dbInfo.DirBlockInfo, index int
 		a.db.SaveDirBlockInfo(dirBlockInfo)
 		a.dirBlockInfoSlice = append(a.dirBlockInfoSlice[:index], a.dirBlockInfoSlice[index+1:]...) //delete it
 		anchorLog.Debugf("Fully confirmed %d times. txid=%s, dirblockInfo=%s\n", txResult.Confirmations, txResult.TxID, spew.Sdump(dirBlockInfo))
+		fmt.Printf("Fully confirmed %d times. txid=%s, dirblockInfo=%s\n", txResult.Confirmations, txResult.TxID, spew.Sdump(dirBlockInfo))
 		if rewrite {
 			anchorLog.Debug("rewrite to anchor chain: ", spew.Sdump(dirBlockInfo))
+			fmt.Println("rewrite to anchor chain: ", spew.Sdump(dirBlockInfo))
+
 			a.saveToAnchorChain(dirBlockInfo)
 		}
 	}
@@ -725,12 +794,37 @@ func (a *Anchor) checkTxMalleation(transaction *btcutil.Tx, details *btcjson.Blo
 			anchorLog.Debugf(err.Error())
 			continue
 		}
-		anchorLog.Debugf("GetRawTransaction=%s, dirBlockInfo=%s\n", spew.Sdump(tx), spew.Sdump(dirBlockInfo))
+		fmt.Printf("GetRawTransaction=%+v, dirBlockInfo=%+v\n", tx, dirBlockInfo)
 		// compare OP_RETURN
 		if reflect.DeepEqual(transaction.MsgTx().TxOut[0], tx.MsgTx().TxOut[0]) {
 			anchorLog.Debugf("Tx Malleated: original.txid=%s, malleated.txid=%s\n", dirBlockInfo.GetBTCTxHash().(*primitives.Hash).String(), transaction.Sha().String())
+			fmt.Printf("Tx Malleated: original.txid=%s, malleated.txid=%s\n", dirBlockInfo.GetBTCTxHash().(*primitives.Hash).String(), transaction.Sha().String())
 			a.doSaveDirBlockInfo(transaction, details, dirBlockInfo.(*dbInfo.DirBlockInfo), true)
 			break
 		}
 	}
 }
+
+/*
+dblock
+keymr: ec237bd561cfde9a5b5c62bdd7af97da089d00253adca58cbc0745b04a7adf72
+             bodymr: cac2458c891a5662dcf48fa753cf19ac998d8f36fb74cd3574e018ca96c3d0d9
+           fullhash: 185f25f9779e74d2de2b986044674e7502d6aa45a6c32929c2e76082fe66a1f1
+  version:         0
+  networkid:       fa92e5a4
+  bodymr:          cac2458c891a5662dcf48fa753cf19ac998d8f36fb74cd3574e018ca96c3d0d9
+  prevkeymr:       86e121a423e20b941375fe311c8ce06e7d47a12cc18a888c7a91a490ced80f11
+  prevfullhash:    1bb4c655e79ef8d9951d20ba0ad6261ead0d3fc6d9804f3e6c3123ea850626f1
+  timestamp:       25333069
+  timestamp str:   2018-03-02 17:49:00
+  dbheight:        41
+  blockcount:      3
+entries:
+    0 chainid: 000000000000000000000000000000000000000000000000000000000000000a
+      keymr:   f339c69f1973273b665569c03cfd014d74f18d83b71502e1ca883e6d259d09c0
+    1 chainid: 000000000000000000000000000000000000000000000000000000000000000c
+      keymr:   e0e8a1101a2f9f259d167500948aa281097a18e1d4a840d3efe0fafd679c6776
+    2 chainid: 000000000000000000000000000000000000000000000000000000000000000f
+      keymr:   a032f4a13b1948e5484ebd73aa6dc9939503e13bd96bc7e15c03b11ced2d8035
+
+ */

@@ -39,7 +39,7 @@ func (s *State) executeMsg(vm *VM, msg interfaces.IMsg) (ret bool) {
 	preExecuteMsgTime := time.Now()
 	_, ok := s.Replay.Valid(constants.INTERNAL_REPLAY, msg.GetRepeatHash().Fixed(), msg.GetTimestamp(), s.GetTimestamp())
 	if !ok {
-		consenLogger.WithFields(msg.LogFields()).Debug("ExecuteMsg (Replay Invalid)")
+		consenLogger.WithFields(msg.LogFields()).Debug("ExecuteMsg (Replay Invalid) ", msg.Type(), msg.GetTimestamp(), s.GetTimestamp())
 		return
 	}
 	s.SetString()
@@ -79,9 +79,11 @@ func (s *State) executeMsg(vm *VM, msg interfaces.IMsg) (ret bool) {
 				TotalXReviewQueueInputs.Inc()
 				s.XReview = append(s.XReview, msg)
 			} else {
+				fmt.Println("================= leader", msg.Type(), msg.String())
 				msg.LeaderExecute(s)
 			}
 		} else {
+			//fmt.Println("=== follower", msg.Type(), msg.String())
 			msg.FollowerExecute(s)
 		}
 		ret = true

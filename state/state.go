@@ -29,6 +29,7 @@ import (
 	"github.com/FactomProject/factomd/database/leveldb"
 	"github.com/FactomProject/factomd/database/mapdb"
 	"github.com/FactomProject/factomd/p2p"
+	"github.com/FactomProject/factomd/anchor"
 	"github.com/FactomProject/factomd/util"
 	"github.com/FactomProject/factomd/wsapi"
 	"github.com/FactomProject/logrustash"
@@ -933,7 +934,10 @@ func (s *State) Init() {
 
 	// add by yjs, init anchor
 	if s.NodeMode == "SERVER" {
-		a, _ := anchor.InitAnchor(s)
+		a, err := anchor.InitAnchor(s)
+		if err != nil {
+			fmt.Println("======== init anchor fail", err)
+		}
 		s.Anchor = a
 	}
 }
